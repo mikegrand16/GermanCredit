@@ -1,0 +1,1223 @@
+---
+title: "Machine Learning Models Applied to German Credit Data"
+author: "Michael Grandinetti"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    toc: TRUE
+date: "2024-03-16"
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#Libraries used
+library(tidyverse)
+library(ggpubr)
+library(caret)
+library(class)
+library(corrplot)
+library(boot)
+library(pROC)
+library(MASS)
+library(ISLR2)
+library(tree)
+library(randomForest)
+library(xgboost)
+library(pROC)
+library(e1071)
+library(knitr)
+library(kableExtra)
+
+setwd("C:/Users/mikeg/OneDrive/Documents/STAT-387/Project")
+
+#Load data set
+germancredit <- read.csv("germancredit.csv")
+
+#Changing qualitative columns to factor data type
+qualitative_columns <- sapply(germancredit, is.character)
+
+germancredit[, qualitative_columns] <- lapply(germancredit[, qualitative_columns], as.factor)
+
+germancredit[, c(1,12,17,19)] <- lapply(germancredit[, c(1,12,17,19)], as.factor)
+```
+
+# Introduction
+
+Credit risk assessment is a critical function in financial institutions, aiming to determine the likelihood that a borrower will default on their obligations. Accurate modeling of default risk enables lenders to make informed decisions, manage financial exposure, and comply with regulatory standards. In this project, we explore the German Credit Data Set, a well-known benchmark in credit scoring research, to develop predictive models that can effectively classify whether a customer is likely to default.
+
+The dataset includes 1,000 individuals with 20 diverse attributes ranging from financial history and employment status to personal demographics and credit-related details. The binary response variable, Default, indicates whether or not a customer defaulted on their loan. The primary goal of this analysis is to build and evaluate statistical and machine learning models that can predict default status with high accuracy and interpretability.
+
+Several modeling techniques were applied, including logistic regression, linear and quadratic discriminant analysis, decision trees, K-nearest neighbors, and ensemble methods like Random Forest and XGBoost. Performance was assessed using 5-fold cross-validation, focusing on metrics such as AUC, sensitivity, and specificity. This study ultimately seeks to identify a model that balances predictive power with practical utility in the context of credit risk classification.
+
+# German Credit Data Set
+
+The German credit dataset was originally provided by Prof. Dr. Hans Hofmann from the University of Hamburg and distributed by the UCI Machine Learning Repository. It contains 1,000 records of loan applicants in Germany, and the goal is to classify applicants as creditworthy (Good) or not creditworthy (Bad) based on various financial and personal attributes. The dataset contains 20 attributes/variables that will be used to predict the Default status of the 1,000 individuals included in this dataset. Below is a table showing each attribute contained in the dataset, as well as the meaning and data type of each attribute.
+
+Table 1: German credit dataset attribute summary.
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+data_desc <- data.frame(
+  Attribute = c("Response", 1:20),
+  Variable = c(
+    "Default", "Checking account status", "Duration in months", "Credit history", "Purpose", "Credit amount",
+    "Savings account/bonds", "Employment since", "Installment rate", "Personal status & sex",
+    "Other debtors/guarantors", "Residence duration", "Property", "Age", "Other installment plans",
+    "Housing", "Credits at this bank", "Job", "Maintenance dependents", "Telephone", "Foreign worker"
+  ),
+  Type = c(
+    "Binary", rep("Categorical", 1), "Numerical", "Categorical", "Categorical", 
+    "Numerical", "Categorical", "Categorical", "Numerical", "Categorical",
+    "Categorical", "Numerical", "Categorical", "Numerical", "Categorical",
+    "Categorical", "Numerical", "Categorical", "Numerical", "Categorical", "Categorical"
+  ),
+  Description = c(
+    "0 = No default, 1 = Default",
+    "A11–A14: <0 DM, 0–199 DM, ≥200 DM, none",
+    "-",
+    "A30–A34: from no credit issues to critical account",
+    "A40–A410: car, furniture, education, etc.",
+    "-",
+    "A61–A65: <100 DM to unknown",
+    "A71–A75: unemployed to ≥7 years",
+    "Percentage of income",
+    "A91–A95: male/female, marital status",
+    "A101–A103: none, co-applicant, guarantor",
+    "Years at current residence",
+    "A121–A124: real estate, insurance, car, unknown",
+    "Age in years",
+    "A141–A143: bank, stores, none",
+    "A151–A153: rent, own, free",
+    "Number of credits",
+    "A171–A174: unskilled to management",
+    "No. of people liable for maintenance",
+    "A191–A192: none or yes",
+    "A201–A202: yes or no"
+  )
+)
+
+kable(data_desc, format = "latex", booktabs = TRUE) |>
+  kable_styling(latex_options = "hold_position") |>
+  column_spec(1, width = "2cm")|>
+  column_spec(2, width = "4cm") |>
+  column_spec(3, width = "2cm") |>
+  column_spec(4, width = "6cm")
+```
+
+
+
+Below in Table 2 includes a summary of the dataset where the counts for the factor levels of each qualitative attribute and general distribution statistics for the attributes that have numerical data types included in this dataset are shown.
+
+Table 2: The number of observations for each factor level of the qualitative attributes and distribution statistics for the numerical attributes in the German credit dataset.
+```{r DataSet, echo=FALSE, warning=FALSE, message=FALSE}
+print(summary(germancredit))
+```
+
+
+# Exploratory Data Analysis (EDA)
+
+We will start analyzing the German credit dataset using Exploratory Data Analysis (EDA), which is used to summarize the attributes of the German credit data set using statistical plots. The analysis includes a correlation plot for the numerical attributes in the dataset shown in Figure 1. Then we will use bar plots showing the distribution of Default Status, Housing Status, and Employment Status shown in Figure 2. And lastly, we look at box plots showing the distribution of Loan Duration, Age, and Savings Amount all grouped by Default Status show in Figure 3.
+
+The correlation plot below shows the correlation coefficient calculated between the numerical attributes in the German credit dataset. A correlation coefficient is a statistical measure used to quantify the strength of the linear relationship between two variables. The correlation coefficient can take on values from -1 to 1, where a coefficient of 1 would suggest a perfectly positive linear relation between the two variables and a coefficient of -1 would suggest a perfectly negative linear relation between the two variables. The correlation plot below shows the correlation coefficients between two attributes by both the size and color of the circles found in the plot.
+
+
+```{r EDA(correlation), echo=FALSE, warning=FALSE, message=FALSE}
+attach(germancredit)
+
+#Calculate correlation between numerical variables
+correlation.values <- cor(germancredit[, sapply(germancredit, function(x) is.numeric(x) | is.integer(x))])
+
+corrplot(correlation.values, method = "circle", order = "hclust", tl.col = "black", tl.srt = 45)
+```
+Figure 1: Correlation plot for the numeric attributes from the German credit dataset.
+
+$\\$
+Analyzing the correlation plot above gives the highest correlation between attributes of Credit Amount and Loan Duration showing a correlation of about 0.625 with confidence intervals of (0.5857, 0.6614) at the 5% level, showing a statistically significant correlation. Although 0.625 is moderate in strength it does suggest a moderate positive linear relation with respect to Credit Amount and Loan Duration. The correlation coefficient between the Installment Rate as a percentage of disposable income and Credit Amount was calculated to be about -0.271 with confidence intervals of (-0.3278, -0.2129), indicating statistical significance at the 5% level. This correlation would show a slight negative linear relation with respect to the Installment Rate as a percentage of disposable income and Credit Amount. The correlation coefficient between Loan Duration and the Installment Rate as a percentage of disposable income was calculated to be about 0.0747 with confidence intervals of (0.0128, 0.1361) suggesting a statistical significance at the 5% level, however it should be noted how small the coefficient estimate is indicating a very small linear relation between the two attributes.  
+
+```{r EDA(barplots), fig.width = 8, fig.height = 5, echo=FALSE, warning=FALSE, message=FALSE}
+annotate_figure(ggarrange(
+ggplot(data = germancredit |> group_by(Default) |> summarise(count = n())) +
+  geom_bar(mapping = aes(x = Default, y = count, fill = Default), stat = "identity") +
+  labs(title="Distrbution of\nDefault Status", x="Default Status", y="Count")+
+  scale_x_discrete(labels = c("No", "Yes"))+
+  scale_fill_manual(labels = c("No", "Yes"),
+                    values = c("blue","red"))+
+  scale_y_continuous(breaks = c(0,100,300,500,700))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)),
+
+ggplot(data = germancredit |> group_by(Default, housing) |> summarise(count = n())) +
+  geom_bar(mapping = aes(x = housing, y = count, fill = Default), 
+           position = "dodge", stat = "identity") +
+  labs(title="By Housing Status", x="Housing Status", y="Count")+
+  scale_x_discrete(labels = c("Rent", "Own", "For Free"))+
+  scale_fill_manual(labels = c("No", "Yes"),
+                    values = c("blue","red"))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)),
+
+ggplot(data = germancredit |> group_by(Default, employ) |> summarise(count = n())) +
+  geom_bar(mapping = aes(x = employ, y = count, fill = Default), 
+           position = "dodge", stat = "identity") +
+  labs(title="By Employment Status", x="Employment Status\n(Number of years employed)", y="Count")+
+  scale_x_discrete(labels = c("Unemployed", "Less than 1", "Between 1-3", "Between 4-7", "7 or more"))+
+  scale_fill_manual(labels = c("No", "Yes"),
+                    values = c("blue","red"))+
+  ylim(0,300)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)),
+
+nrow = 1, ncol = 3,
+common.legend = TRUE, legend = "right"),
+top = text_grob("Default Status Distrbution",color = "black", face = "bold", size = 16)
+)
+
+```
+Figure 2: Bar plots showing the distribution of Default Status (left), bar plots for Housing Status (center), Employment Status (right) grouped by Default Status.
+
+$\\$
+Starting with the left plot in Figure 2 showing the distribution of Default Status in the German credit data set shows a 70/30 split of the non-Default class and the Default class, as the non-Default class is represented by 700 observations and the Default class is represented by 300 observations. The bar plot on the right for the distribution of the Default and non-Default classes partitioned by employment status shows that the Unemployed group Defaulted with a rate of about 37.10%, the people working less than a year had a Default rate of about 40.70%, those who have worked between 1-3 years had a Default rate of around 30.68%, those who have worked between 4-7 years Defaulted with a rate of about 22.41%, and the people have worked for over 7 years had a Default rate of about 25.30%. 
+
+```{r EDA(boxplots), echo=FALSE, warning=FALSE, message=FALSE}
+par(mfrow = c(1, 3), mar = c(4.9, 4.1, 4.1, 2.1))
+boxplot(duration ~ Default, data = germancredit,
+        main = "Duration by Default Status",
+        xlab = "Default Status",
+        ylab = "Duration (months)",
+        col = c("blue", "red"))
+
+boxplot(age ~ Default, data = germancredit, 
+        main = "Age Grouped by Default Status",
+        xlab = "Default Status",
+        ylab = "Age (Years)",
+        col = c("blue", "red"))
+
+boxplot(amount ~ Default, data = germancredit, 
+        main = "Credit Amount by Default Status",
+        xlab = "Default Status",
+        ylab = "Credit Amount (Deutsche Mark, DM)",
+        col = c("blue", "red"))
+```
+Figure 3: Box plot of the distributions of Loan Duration (left), Age (center), and Credit Amount grouped by Default Status.
+
+$\\$
+The box plot of the distribution of Loan Duration grouped by Default Status indicates on average those who have defaulted have higher Loan Duration, as the mean value for the Default class was 24.9 months, while the mean for the non-default class was 19.2 months. We can also see from the box plot that the distribution of the Default class in terms of Loan Duration is widely spread out in comparison to the Default class which has a much more narrow interval for the distribution. The right box plot of Figure 3 showing the distribution of Credit Amount by Default Status shows similar behavior. The Default class in terms of Credit Amount has a higher mean value than the non-Default class, with a mean value of DM3938 while the non-Default class had a mean value of DM2985. The spread of the Default class is also wide in comparison to the non-Default class distribution in terms of Credit Amount. The distribution of Age with respect to Default Status shown in the center plot of Figure 3 indicates that on average those in the non-Default class are older than those who are in the Default class. The mean Age for the non-Default class was about 36 years old, while the mean Age for the Default class was 34 years old. Here the spread for the distribution of Age with respect to Default Status is very similar in both classes.
+
+# Methodology
+## Types of Models
+
+**Logistic Regression**
+
+Logistic regression is a generalized linear model used for binary classification. It models the log-odds of the probability of the default class as a linear combination of the input variables. The model estimates the probability that a given input belongs to class 1 (Default), using the logistic function to constrain the output between 0 and 1. Classification is typically based on whether this predicted probability exceeds a chosen threshold.
+
+**Linear Discriminant Analysis (LDA)**
+
+LDA is a probabilistic classification method that assumes each class follows a multivariate normal distribution with a shared covariance matrix. It estimates the class-conditional densities and uses Bayes’ theorem to compute posterior probabilities for each class. The prediction is made by assigning the observation to the class with the highest posterior probability. LDA is optimal under the assumption of equal covariance and normally distributed predictors.
+
+**Quadratic Discriminant Analysis (QDA)**
+
+QDA extends LDA by relaxing the assumption of equal covariance matrices between classes. Each class is still modeled as a multivariate normal distribution, but with its own covariance matrix, allowing more flexible and nonlinear decision boundaries. QDA is more adaptable than LDA in situations where class covariances differ significantly but may overfit with small sample sizes.
+
+**K-Nearest Neighbors**
+
+KNN is a non-parametric classification algorithm that assigns a class label based on the majority vote of the k closest training observations (measured typically using Euclidean distance). The choice of k is a tuning parameter that balances bias and variance: lower values capture local structure, while higher values smooth out noise. No explicit training is done; all computation occurs at prediction time.
+
+**Decision Tree**
+
+Decision trees recursively partition the feature space based on values of the predictors to build a tree structure that classifies observations. At each node, the algorithm selects the variable and split that best separates the data (e.g., using Gini impurity or entropy). The tree continues growing until a stopping criterion is met (e.g., minimum node size or maximum depth). Trees are interpretable but prone to overfitting unless pruned or regularized.
+
+**Random Forest**
+
+Random forest is an ensemble learning method that builds a large number of decision trees on bootstrapped subsets of the training data, introducing randomness in feature selection at each split. The final prediction is made by aggregating (majority vote) the predictions from all individual trees. This process reduces variance and improves generalization compared to a single decision tree.
+
+**XGBoost**
+
+XGBoost (Extreme Gradient Boosting) is a gradient boosting framework that builds decision trees sequentially to minimize classification error. Each new tree is trained on the residuals of the previous trees, gradually improving the model. XGBoost incorporates regularization, tree pruning, and parallel computation, making it both efficient and robust to overfitting. It is particularly effective on structured/tabular data.
+
+## 5-fold Cross Validation Setup
+
+For estimating the test error rate of each method a 5-fold cross validation resampling method was implemented where 5 validation sets of 200 observations each were used. This means we will have 5 estimates for the misclassification/test error rate that corresponds to the 5 different validation sets and training sets that will be used to model the data from the German credit dataset. So, our estimated test error rate will be an average of the 5 test error estimates based on the 5-fold cross validation. This is shown in the equation below where the ith test error rate represents the estimated test error of the ith validation set and the index j represents the jth observation.
+
+\begin{align*}
+  CV_{5} &= \frac{1}{5}\sum_{i=1}^{5}\left[\frac{1}{200}\sum_{j = 1}^{200} I(y_{ij} \neq \hat{y}_{ij})\right]\\
+  &= \frac{1}{1000}\sum_{i=1}^{5}\sum_{j=1}^{200} I(y_{ij} \neq \hat{y}_{ij})
+\end{align*}
+
+Where $I(y_{ij} \neq \hat{y}_{ij})$ returns the value of 1 when the prediction for the response variable does not equal the observed value in the validation set and will return a 0 when the prediction matches the observed value.
+
+It is important to note that the 5 folds created for this cross validation were stratified by using the createFolds() function in R. So, the distribution of the Non-Default class and the Default class in each validation set and training set used are the same for each set with 70% of the observations being observed to be the Non-Default class, while the remaining 30% of the observations observed to be the Default class.
+
+```{r k-fold CV setup, echo=FALSE, warning=FALSE, message=FALSE}
+############### Setup for k-fold CV
+#Scale numerical columns
+numeric_columns <- sapply(germancredit, is.numeric)
+germancredit[,numeric_columns] <- scale(germancredit[,numeric_columns])
+
+#For making validation sets when using k-fold CV later
+set.seed(12)
+
+k <- 5
+
+#Create stratified folds
+folds <- createFolds(germancredit$Default, k = k, list = TRUE, returnTrain = FALSE)
+
+#Create k-fold cross-validation sets
+for (i in 1:k) {
+  val_indices <- unlist(folds[i])
+  val.set <- germancredit[val_indices, ]
+  val.set.name <- paste0("val.set.", i)
+  assign(val.set.name, val.set)
+}
+```
+
+## Optimal Threshold Criterion
+
+For comparison later, the Area Under the Curve (AUC), sensitivity, specificity, and misclassification rate were calculated. To determine which threshold value should be used the Youden Index will be calculated based on the ROC curve for each model. The ROC (Receiver Operating Characteristic) curve is a graphical plot that illustrates the performance of a binary classification model at various threshold values. The Youden Index ($J$) is a single statistic that summarizes the performance of a binary classifier across different thresholds using equally weighted sensitivity and specificity values from the ROC curve. For this data the sensitivity of the model will refer to the probability of predicting the Default class (Yes) correctly, while the specificity of the model will refer to the probability of predicting the Non-Default class (No) correctly. The Youden Index (J) is defined as follows:
+$$
+J = \text{sensitivity} + \text{specificity} -1
+$$
+The Youden Index ranges from 0 to 1, where 0 indicates that the classifier performs no better than random chance, and 1 indicates perfect classification. The Youden Index provides a balance between sensitivity and specificity, making it especially useful when both types of classification errors (false positives and false negatives) are considered equally undesirable.
+
+By computing the Youden Index across all possible threshold values on the ROC curve, the threshold that maximizes $J$ is selected as the optimal threshold. This threshold is where the classifier achieves the best tradeoff between correctly identifying defaults (sensitivity) and correctly identifying non-defaults (specificity).
+
+
+Another important note regarding the German credit dataset used in this report is that the numerical predictors in the data were scaled using the scale() function in R to reduce the effect that large input parameter values would have on the models in terms of adding bias to the model and to prevent overfitting.
+
+# Results
+
+## Logistic Regression
+
+For the logistic regression method we will first fit a model using all 20 of the attributes included in the German credit dataset. We will then test for the significance of each attribute using a significance level of 5% to ultimately make a reduced model including only the attributes that have a significance level of under 5%. A summary of the fitting of the Logistic Regression model is shown below.
+
+```{r Logistic Regression(Signficance of Predictors), include=FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+#First fit, model with all predictors
+glm.fit <- glm(Default ~ ., data = germancredit, family = binomial)
+
+summary(glm.fit)
+
+```
+
+$\\$
+
+Table 3: Reduced Logistic Regression Model using 11 of the 20 attributes in the German credit dataset.
+```{r Reduced Logistic Model, echo=FALSE, warning=FALSE, message=FALSE}
+#Reduced Logistic Regression Model
+#Fit Model with only significant predictors:
+glm.fit.train <- glm(Default ~ checkingstatus1 + duration + history + purpose + amount + savings + installment + status + others + otherplans + foreign, data = germancredit, family = binomial)
+
+summary(glm.fit.train)
+
+#Confidence Intervals
+#confint(glm.fit.train)
+```
+A summary of the reduced logistic regression model is shown above, where we are left with a 11 attribute/parameter model. The attributes used in the reduced logistic regression model are the Status of existing checking account, loan duration, credit history, purpose of the loan, credit amount, savings account, installment rate in percentage of disposable income, personal status and sex, other debtors/guarantors, other installment plans, and whether the individual is a foreign worker or not. Note that even though some of the specific factor levels of the attributes included may not be statistically significant at the 5% level, however at least one factor level of each attribute is statistically significant. Trying to remove the other insignificant factor levels from the attributes would result in removing or changing the attribute entirely, hence why the statistically insignificant factor levels were included in the reduced logistic regression model.
+
+
+### Reduced Logistic Regression model with 5-fold CV
+
+We can now test this reduced logistic regression model using the 5-fold CV explained previously in the methodology section and calculate the average AUC for the model trained and tested based on the 5 validation and training sets determined by the stratified folds. And we will evaluate sensitivity, specificity, and misclassification rate of the model using the optimal p-threshold determined by the Youden Index.
+
+```{r Logistic Regression(CV), echo=FALSE, warning=FALSE, message=FALSE}
+## K-fold with Reduced Model for logistic regression
+#Initialize list to store values of each fold
+logistic.test.errors <- numeric(k)
+logistic.ROC_list <- list()
+logistic.AUC_list <- numeric(k)
+confusion.tables <- list()
+logistic.sensitivity_list <- numeric(k)
+logistic.specificity_list <- numeric(k)
+logistic.optimal_thresholds <- list()
+
+#Performs k-fold with validation sets
+for (i in 1:k){
+  val.set.name <- paste0("val.set.", i)
+  
+  current.val.set <- get(val.set.name) #This is the i^th validation set
+  
+  indices <- as.numeric(rownames(current.val.set))
+  
+  train.set <- germancredit[-indices, ] #Make training set as k-1 folds
+  
+  glm.fit <- glm(Default ~ checkingstatus1 + duration + history + purpose + amount + savings + installment + status + others + otherplans + foreign, data = train.set, family = binomial)
+  
+  glm.probs <- predict(glm.fit, newdata = current.val.set, type = "response")
+  
+  test.Default <- current.val.set$Default
+  
+  ROC <- roc(test.Default, glm.probs) #For ROC plot
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  class_labels <- levels(current.val.set$Default)
+  glm.pred.class <- factor(ifelse(glm.probs > optimal_threshold, 
+                                  class_labels[2], class_labels[1]), 
+                           levels = class_labels)
+  
+  conf_mat <- table(Predicted = glm.pred.class, Actual = current.val.set$Default)
+  confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat[2, 2] / sum(conf_mat[, 2])
+  specificity <- conf_mat[1, 1] / sum(conf_mat[, 1])
+  
+  #Store sensitivity and specificity at optimal threshold
+  logistic.sensitivity_list[i] <- sensitivity
+  logistic.specificity_list[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  logistic.test.errors[i] <- mean(glm.pred.class != current.val.set$Default)
+  
+  logistic.AUC_list[i] <- auc(ROC)
+  logistic.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  logistic.optimal_thresholds[i] <- optimal_threshold
+}
+
+#Plot for ROC curves of Reduced Logistic Regression models for each k-fold
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(logistic.ROC_list[[1]])
+colors <- rainbow(k)  #Generate a sequence of colors
+for (i in 1:k) {
+  lines(logistic.ROC_list[[i]], col = colors[i])
+}
+```
+Figure 4: ROC Curves for 5-Fold Cross-Validated Logistic Regression Model.
+
+$\\ \\$
+
+$\\ \\$
+
+Table 4: Average Confusion Matrix for Logistic Regression Model with 5-Fold Cross-Validation.
+```{r Logistic Regression(Results), echo=FALSE, warning=FALSE, message=FALSE}
+#To make one confusion table with avg values
+#Initialize list to store values of each fold
+log.No_no <- numeric(k)
+log.Yes_no <- numeric(k)
+log.No_yes <- numeric(k)
+log.Yes_yes <- numeric(k)
+
+#Loop to get each value of table
+for (i in 1:k){
+  log.No_no[i] <- confusion.tables[[i]][1]
+  log.Yes_no[i] <- confusion.tables[[i]][2]
+  log.No_yes[i] <- confusion.tables[[i]][3]
+  log.Yes_yes[i] <- confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+log.means.matrix <- matrix(c(mean(log.No_no), mean(log.No_yes),
+                         mean(log.Yes_no), mean(log.Yes_yes)),
+                       nrow = 2, byrow = TRUE,
+                       dimnames = list(c("No", "Yes"), c("No", "Yes")))
+
+kable(log.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+#This is the average of values for the confusion matrix for the 5 k-fold cv
+#print("Average Confusion Matrix of Logistic Regression Model")
+#log.means.matrix
+
+#Average misclassification rate across range of threshold values
+lg.mean.AUC <- mean(logistic.AUC_list)
+
+#Estimated Error rate at optimal p-threshold in terms of AUC
+lg.mean.test.error <- mean(logistic.test.errors)
+
+#Average specificity and sensitivity
+lg.mean.sensitivity <- mean(logistic.sensitivity_list)
+lg.mean.specificity <- mean(logistic.specificity_list)
+
+cat("Average Results for Logistic Regression Model with 5-Fold Cross-Validation\n",
+    "Average AUC: ", lg.mean.AUC, ",  sd = ", sd(logistic.AUC_list), "\n", 
+    "Average Sensitivity: ", lg.mean.sensitivity, ",  sd = ", sd(logistic.sensitivity_list), "\n",
+    "Average Specificity: ", lg.mean.specificity, ",  sd = ", sd(logistic.specificity_list), "\n",
+    "Average Misclassification Rate: ", lg.mean.test.error, ",  sd = ", sd(logistic.test.errors), "\n",
+    sep = "")
+```
+
+The results of the logistic regression model showed an AUC of about 0.7885 with an estimated test error rate of 0.264. The average Specificity using the optimal threshold value for each fold of the 5-fold CV was estimated to be about 0.7271, while the Sensitivity using the same thresholds was estimated to be about 0.7567. This means that on average using the optimal threshold values per fold, the model correctly classified the Non-Default class around 72.71% of the time, while the model correctly classified the Default class around 75.67% of the time. The estimated test error rates of 0.264 and an AUC of 0.7885 indicates that the model has a reasonably good ability to discriminate between defaulters and non-defaulters, though there remains room for improvement. The balanced sensitivity and specificity also suggest the model performs well on both classes, its overall performance is acceptable but not outstanding, falling within the commonly accepted AUC range of 0.7–0.8 for credit risk modeling.
+
+## Linear Discriminant Analysis (LDA)
+
+In LDA a linear combination of the predictors is found that best separates the two classes by projecting the data onto a common axis that distinguishes the classes more effectively. This is done through maximizing the distance between the means of different classes while minimizing the variance within each class. In LDA, it is assumed that each class shares the same covariance matrix resulting in linear decision boundaries when distinguishing between the two classes. The results of the LDA model for the German credit dataset is shown below. 
+
+```{r LDA, echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+lda.test.errors <- numeric(k)
+lda.ROC_list <- list()
+lda.AUC_list <- numeric(k)
+lda.confusion.tables <- list()
+lda.sensitivity_list <- numeric(k)
+lda.specificity_list <- numeric(k)
+lda.optimal_thresholds <- list()
+
+#Performs k-fold with validation sets for LDA
+for (i in 1:k){
+  val.set.name <- paste0("val.set.", i)
+  
+  current.val.set <- get(val.set.name)
+  
+  indices <- as.numeric(rownames(current.val.set))
+  
+  train.set <- germancredit[-indices, ]
+  
+  lda.fit <- lda(Default ~ ., data = train.set)
+  
+  lda.pred <- predict(lda.fit, newdata = current.val.set)
+  lda.class <- lda.pred$class
+  
+  test.Default <- current.val.set$Default
+  
+  #ROC curves and AUC calculation
+  lda.probs <- lda.pred$posterior[, 2]
+  ROC <- roc(test.Default, lda.probs)
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  class_labels <- levels(current.val.set$Default)
+  lda.pred.class <- factor(ifelse(lda.probs > optimal_threshold, class_labels[2], class_labels[1]), levels = class_labels)
+  
+  conf_mat <- table(Predicted = lda.pred.class, Actual = current.val.set$Default)
+  lda.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat[2, 2] / sum(conf_mat[, 2])
+  specificity <- conf_mat[1, 1] / sum(conf_mat[, 1])
+  
+  #Store sensitivity and specificity at optimal threshold
+  lda.sensitivity_list[i] <- sensitivity
+  lda.specificity_list[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  lda.test.errors[i] <- mean(lda.pred.class != current.val.set$Default)
+  
+  lda.AUC_list[i] <- auc(ROC)
+  lda.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  lda.optimal_thresholds[i] <- optimal_threshold
+}
+
+#Plot for ROC curves of LDA models for each k-fold
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(lda.ROC_list[[1]])
+colors <- rainbow(k)  # Generate a sequence of colors
+for (i in 1:k) {
+  lines(lda.ROC_list[[i]], col = colors[i])
+}
+```
+Figure 5: ROC Curves for 5-Fold Cross-Validated LDA Model.
+$\\ \\$
+
+Table 5: Average Confusion Matrix for LDA Model with 5-Fold Cross-Validation.
+```{r LDA(results), echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+lda.No_no <- numeric(k)
+lda.Yes_no <- numeric(k)
+lda.No_yes <- numeric(k)
+lda.Yes_yes <- numeric(k)
+
+for (i in 1:k){
+  lda.No_no[i] <- lda.confusion.tables[[i]][1]
+  lda.Yes_no[i] <- lda.confusion.tables[[i]][2]
+  lda.No_yes[i] <- lda.confusion.tables[[i]][3]
+  lda.Yes_yes[i] <- lda.confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+lda.means.matrix <- matrix(c(mean(lda.No_no), mean(lda.No_yes),
+                         mean(lda.Yes_no), mean(lda.Yes_yes)),
+                       nrow = 2, byrow = TRUE,
+                       dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(lda.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+#Average values for AUC, sensitivity, specificity, and test error
+lda.mean.AUC <- mean(lda.AUC_list)
+lda.mean.sensitivity <- mean(lda.sensitivity_list)
+lda.mean.specificity <- mean(lda.specificity_list)
+lda.mean.test.error <- mean(lda.test.errors)
+
+cat("Average Results for LDA Model with 5-Fold Cross-Validation\n",
+    "Average AUC: ", lda.mean.AUC, ",  sd = ", sd(lda.AUC_list), "\n", 
+    "Average Sensitivity: ", lda.mean.sensitivity, ",  sd = ", sd(lda.sensitivity_list), "\n",
+    "Average Specificity: ", lda.mean.specificity, ",  sd = ", sd(lda.specificity_list), "\n",
+    "Average Misclassification Rate: ", lda.mean.test.error, ",  sd = ", sd(lda.test.errors), "\n",
+    sep = "")
+```
+
+The LDA model yielded an AUC of approximately 0.7778 and an average misclassification rate of 0.272. Based on the optimal threshold values identified by the Youden Index across each fold of the 5-fold cross-validation, the model achieved an average Specificity of about 73.00% and an average Sensitivity of roughly 72.30%. This indicates that on average, the model was able to correctly identify Non-Default cases 73.00% of the time and Default cases 72.30% of the time. With a misclassification rate of 0.272 and an AUC close to 0.78, the model demonstrates a solid capacity to differentiate between the two classes, though it does not reach exceptional performance. The relatively even sensitivity and specificity values further suggest balanced predictive ability for both defaulters and non-defaulters. Overall, the model performs reliably and falls within the generally accepted AUC range of 0.7 to 0.8 for credit risk classification tasks.
+
+## Quadratic Discriminant Analysis (QDA)
+
+Quadratic Discriminant Analysis (QDA) fits quadratic decision boundaries by allowing for each class to have its own covariance matrix. This leads to the decision boundaries in QDA to be quadratic in nature when distinguishing between the two classes. So, QDA is ideal if one expects the variability in the different classes to come from different distributions, then QDA could be better suited.
+
+```{r QDA, echo=FALSE, warning=FALSE, message=FALSE}
+#Change Columns of germancredit to numeric data types
+numeric.germancredit <- germancredit
+qualitative_columns <- sapply(numeric.germancredit, is.factor)
+numeric.germancredit[, qualitative_columns] <- lapply(germancredit[, qualitative_columns], as.integer)
+
+numeric.germancredit$Default <- as.factor(numeric.germancredit$Default)
+
+#Initialize list to store values of each fold
+qda.test.errors <- numeric(k)
+qda.ROC_list <- list()
+qda.AUC_list <- numeric(k)
+qda.confusion.tables <- list()
+qda.sensitivity_list <- numeric(k)
+qda.specificity_list <- numeric(k)
+qda.optimal_thresholds <- list()
+
+#Performs 5-fold CV using QDA
+for (i in 1:k){
+  val.set.name <- paste0("val.set.", i)
+  
+  current.val.set <- get(val.set.name)
+  
+  indices <- as.numeric(rownames(current.val.set))
+  
+  train.set <- numeric.germancredit[-indices, ]
+  
+  quali.columns <- sapply(current.val.set, is.factor)
+  current.val.set[, quali.columns] <- lapply(current.val.set[, quali.columns], as.integer)
+  
+  current.val.set$Default <- as.factor(current.val.set$Default)
+  
+  qda.fit <- qda(Default ~ ., data = train.set)
+  
+  qda.pred <- predict(qda.fit, newdata = current.val.set)
+  qda.class <- qda.pred$class
+  
+  test.Default <- current.val.set$Default
+  
+  #ROC curves and AUC calculation
+  qda.probs <- qda.pred$posterior[, 2]
+  ROC <- roc(test.Default, qda.probs)
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  class_labels <- levels(current.val.set$Default)
+  qda.pred.class <- factor(ifelse(qda.probs > optimal_threshold, class_labels[2], class_labels[1]), levels = class_labels)
+  
+  conf_mat <- table(Predicted = qda.pred.class, Actual = current.val.set$Default)
+  qda.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat[2, 2] / sum(conf_mat[, 2])
+  specificity <- conf_mat[1, 1] / sum(conf_mat[, 1])
+  
+  #Store sensitivity and specificity at optimal threshold
+  qda.sensitivity_list[i] <- sensitivity
+  qda.specificity_list[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  qda.test.errors[i] <- mean(qda.pred.class != current.val.set$Default)
+  
+  qda.AUC_list[i] <- auc(ROC)
+  qda.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  qda.optimal_thresholds[i] <- optimal_threshold
+}
+
+#Plot for ROC curves of QDA models for each k-fold
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(qda.ROC_list[[1]])
+colors <- rainbow(k)  # Generate a sequence of colors
+for (i in 1:k) {
+  lines(qda.ROC_list[[i]], col = colors[i])
+}
+```
+Figure 6: ROC Curves for 5-Fold Cross-Validated QDA Model.
+$\\ \\$
+
+Table 6: Average Confusion Matrix for QDA Model with 5-Fold Cross-Validation.
+```{r QDA (Results), echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+qda.No_no <- numeric(k)
+qda.Yes_no <- numeric(k)
+qda.No_yes <- numeric(k)
+qda.Yes_yes <- numeric(k)
+
+for (i in 1:k){
+  qda.No_no[i] <- qda.confusion.tables[[i]][1]
+  qda.Yes_no[i] <- qda.confusion.tables[[i]][2]
+  qda.No_yes[i] <- qda.confusion.tables[[i]][3]
+  qda.Yes_yes[i] <- qda.confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+qda.means.matrix <- matrix(c(mean(qda.No_no), mean(qda.No_yes),
+                             mean(qda.Yes_no), mean(qda.Yes_yes)),
+                           nrow = 2, byrow = TRUE,
+                           dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(qda.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+#Average values for AUC, sensitivity, specificity, and test error
+qda.mean.AUC <- mean(qda.AUC_list)
+qda.mean.sensitivity <- mean(qda.sensitivity_list)
+qda.mean.specificity <- mean(qda.specificity_list)
+qda.mean.test.error <- mean(qda.test.errors)
+
+cat("Average Results for QDA Model with 5-Fold Cross-Validation\n",
+    "Average AUC: ", qda.mean.AUC, ",  sd = ", sd(qda.AUC_list), "\n", 
+    "Average Sensitivity: ", qda.mean.sensitivity, ",  sd = ", sd(qda.sensitivity_list), "\n",
+    "Average Specificity: ", qda.mean.specificity, ",  sd = ", sd(qda.specificity_list), "\n",
+    "Average Misclassification Rate: ", qda.mean.test.error, ",  sd = ", sd(qda.test.errors), "\n",
+    sep = "")
+```
+
+The QDA model produced an AUC of approximately 0.7629 and an average misclassification rate of 0.302. Using the optimal probability thresholds determined via the Youden Index for each fold, the model achieved an average Sensitivity of about 78.70% and a Specificity of around 66.00%. This implies that on average, the model was more effective at correctly identifying Default cases than Non-Default cases. While the AUC of 0.7629 places the model within the acceptable range for credit risk classification, the relatively higher misclassification rate and imbalanced performance between sensitivity and specificity suggest that the model may over-prioritize detecting defaulters at the expense of correctly classifying non-defaulters. Overall, the QDA model shows reasonable discriminative ability, but its performance is somewhat less balanced and slightly weaker compared to the LDA and logistic regression models.
+
+
+## K-nearest neighbors (KNN)
+KNN is a non-parametric classifier that identifies the k-nearest points in the training set that are closest to the test observation and classifies that observation to the class with the largest probability. To determine the optimal K for the KNN model we will estimate the test error rate for K-values ranging from 1 to 40 and choose the K that minimizes the test error rate. Cross validation was used to determine the optimal K, where the K value that produces the highest accuracy will be determined as the optimal K for the 5-fold CV KNN model. Then, the 5-fold CV KNN model used the p-threshold value determined by the Youden Index for each fold and the results for the average of the 5-folds is shown below.
+
+```{r KNN determining k, echo=FALSE, warning=FALSE, message=FALSE}
+################################ KNN Model
+set.seed(12)
+
+#This is to find optimal k.
+trControl <- trainControl(method = "cv")
+
+knnfit <- train(Default~ .,
+                method = "knn",
+                tuneGrid = expand.grid(k = 1:40),
+                trControl = trControl,
+                metric = "Accuracy",
+                data = numeric.germancredit)
+
+Results <- knnfit$results
+optimal_k <- Results[which.max(Results$Accuracy), ]
+
+#Plot to determine optimal k
+plot(Results$k, 1-Results$Accuracy, type = "l", 
+     xlab = "k-Value", ylab = "Test Error Rate")
+points(optimal_k$k, 1-optimal_k$Accuracy, col = "red", pch = 16)
+abline(v = optimal_k$k, col = "red", lty = 2)
+abline(h = 1-optimal_k$Accuracy, col = "blue", lty = 2)
+text(optimal_k$k+0.8, 0.283, as.character(optimal_k$k), col = "black", cex = 1, xpd = TRUE)
+text(1.3, 1-optimal_k$Accuracy + 0.003, as.character(1-optimal_k$Accuracy), col = "black", cex = 1, xpd = TRUE)
+
+```
+Figure 7: Test Error/Misclassification Rate for k-Values Ranging from 1 to 40 for the KNN Model.
+
+```{r KNN with Optimal k, echo=FALSE, warning=FALSE, message=FALSE}
+#Fitting knn model with optimal k
+set.seed(12)
+
+#Initialize list to store values of each fold
+knn.ROC_list <- list()
+knn.auc_vector <- numeric(k)
+knn.confusion.tables <- list()
+knn.sensitivity_vector <- numeric(k)
+knn.specificity_vector <- numeric(k)
+knn.misclassification_vector <- numeric(k)
+knn.optimal_thresholds <- list()
+
+#Performs 5-fold CV and gets statistics we need for presentation
+for (i in 1:k){
+  val.set.name <- paste0("val.set.", i)
+  
+  current.val.set <- get(val.set.name)
+  
+  indices <- as.numeric(rownames(current.val.set))
+  
+  train.set <- germancredit[-indices, ]
+  
+  current.val.set$Default <- as.factor(current.val.set$Default)
+  
+  # Force factor and assign clean names
+  train.set$Default <- factor(train.set$Default, levels = c(0, 1), labels = c("Class0", "Class1"))
+  current.val.set$Default <- factor(current.val.set$Default, levels = c(0, 1), labels = c("Class0", "Class1"))
+  
+  test.Default <- current.val.set$Default
+  
+  knn.mod <- train(Default~ .,
+                  method = "knn",
+                  tuneGrid = data.frame(k = optimal_k$k),
+                  metric = "Accuracy",
+                  trControl = trainControl(classProbs = TRUE),
+                  data = train.set)
+  
+  #ROC curves and AUC calculation
+  knn.probs <- predict(knn.mod, newdata = current.val.set, type = "prob")[, "Class1"]
+  ROC <- roc(as.numeric(test.Default), knn.probs)
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  knn.pred.class <- factor(ifelse(knn.probs > optimal_threshold, "Class1", "Class0"), levels =levels(current.val.set$Default))
+  
+  conf_mat <- table(Predicted = knn.pred.class, Actual = current.val.set$Default)
+  knn.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat[2, 2] / sum(conf_mat[, 2])
+  specificity <- conf_mat[1, 1] / sum(conf_mat[, 1])
+  
+  # Store sensitivity and specificity at optimal threshold
+  knn.sensitivity_vector[i] <- sensitivity
+  knn.specificity_vector[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  knn.misclassification_vector[i] <- mean(knn.pred.class != current.val.set$Default)
+  
+  knn.auc_vector[i] <- auc(ROC)
+  knn.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  knn.optimal_thresholds[i] <- optimal_threshold
+}
+
+#Plot for ROC curves of KNN models for each k-fold
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(knn.ROC_list[[1]])
+colors <- rainbow(k)  # Generate a sequence of colors
+for (i in 1:k) {
+  lines(knn.ROC_list[[i]], col = colors[i])
+}
+```
+Figure 8: ROC Curves for 5-Fold Cross-Validated KNN Model with optimal k-Value of 15.
+$\\ \\$
+
+Table 8: Average Confusion Matrix for the k = 15 KNN Model with 5-Fold Cross-Validation.
+```{r KNN (Results), echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+knn.No_no <- numeric(k)
+knn.Yes_no <- numeric(k)
+knn.No_yes <- numeric(k)
+knn.Yes_yes <- numeric(k)
+
+for (i in 1:k){
+  knn.No_no[i] <- knn.confusion.tables[[i]][1]
+  knn.Yes_no[i] <- knn.confusion.tables[[i]][2]
+  knn.No_yes[i] <- knn.confusion.tables[[i]][3]
+  knn.Yes_yes[i] <- knn.confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+knn.means.matrix <- matrix(c(mean(knn.No_no), mean(knn.No_yes),
+                             mean(knn.Yes_no), mean(knn.Yes_yes)),
+                           nrow = 2, byrow = TRUE,
+                           dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(knn.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+
+#Average results across all folds
+knn.mean_auc <- mean(knn.auc_vector)
+knn.mean_sensitivity <- mean(knn.sensitivity_vector)
+knn.mean_specificity <- mean(knn.specificity_vector)
+knn.mean_misclassification <- mean(knn.misclassification_vector)
+
+cat("Average Results for KNN Model with k = 15 and 5-Fold Cross-Validation\n",
+    "Average AUC: ", knn.mean_auc, ",  sd = ", sd(knn.auc_vector), "\n",
+    "Average Sensitivity: ", knn.mean_sensitivity, ",  sd = ", sd(knn.sensitivity_vector), "\n",
+    "Average Specificity: ", knn.mean_specificity, ",  sd = ", sd(knn.specificity_vector), "\n",
+    "Average Misclassification Rate: ", knn.mean_misclassification, ",  sd = ", sd(knn.misclassification_vector), "\n")
+
+```
+
+Looking at the results of the KNN model the AUC of was determined to be about 0.7082 using an a K value of 15. The average misclassification rate for the KNN model using K = 15 was estimated to be around 0.367. The probability of predicting the Non-Default class is given by the specificity of about 0.5857 and the probability of predicting the Default class is given by the sensitivity of about 0.7433. Even with the AUC of over 0.7 the model has a high misclassification rate, very poor specificity and the sensitivity is within the range of the other models fitted so far.
+$\\ \\$
+
+$\\ \\$
+
+## Decision Tree
+For the Decision Tree model, performance was evaluated using 5-fold cross-validation to estimate test error rates and assess classification performance. Prior to cross-validation, the tree was fit to the full training data and pruned using cross-validation to identify the optimal tree size — determined by the complexity parameter that minimized the number of misclassifications. This optimal tree size was then used consistently across all five folds. For each validation set, class predictions were made using the probability estimates from the pruned tree, and the optimal probability threshold for classification was selected using the Youden Index. This approach ensures that the threshold used to convert predicted probabilities into class labels maximizes the model’s combined sensitivity and specificity.
+
+```{r Decision Tree Size, echo=FALSE, warning=FALSE, message=FALSE}
+#################### Decision Tree
+set.seed(12)
+
+#Finding optimal tree size value
+tree.german <- tree(Default ~., data = germancredit)
+cv.german <- cv.tree(tree.german, FUN = prune.misclass)
+plot(cv.german$size, cv.german$dev, type = "b", xlab = "Tree Size", ylab = "Number of Misclassifications")
+```
+Figure 9: The Number of Misclassifications for a Decision Tree Model for Tree Sizes ranging from 1 to 8.
+
+```{r Decision Tree 5-fold, echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+tree.confusion.tables <- list()
+tree.ROC_list <- list()
+tree.auc_vector <- numeric(k)
+tree.sensitivity_vector <- numeric(k)
+tree.specificity_vector <- numeric(k)
+tree.misclassification_vector <- numeric(k)
+tree.optimal_thresholds <- list(k)
+
+#Performs 5-fold CV
+for (i in 1:k){
+  val.set.name <- paste0("val.set.", i)
+  
+  current.val.set <- get(val.set.name)
+  
+  indices <- as.numeric(rownames(current.val.set))
+  
+  train.set <- germancredit[-indices, ]
+  
+  current.val.set$Default <- as.factor(current.val.set$Default)
+  
+  current.val.set$Default <- as.factor(current.val.set$Default)
+  
+  tree.mod <- tree(Default ~., data = train.set)
+  
+  prune.german <- prune.tree(tree.mod, best = cv.german$size[which.min(cv.german$dev)])
+  
+  # Get predicted probabilities instead
+  yhat.probs <- predict(prune.german, current.val.set, type = "vector")[,2]
+  ROC <- roc(current.val.set$Default, yhat.probs)
+  
+  #Store AUC and ROC
+  tree.auc_vector[i] <- auc(ROC)
+  tree.ROC_list[[i]] <- ROC
+  
+  test.Default <- current.val.set$Default
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  tree.pred.class <- factor(ifelse(yhat.probs > optimal_threshold, "1", "0"), levels = c("0", "1"))
+  
+  conf_mat <- table(Predicted = tree.pred.class, Actual = factor(test.Default, levels = c(0,1)))
+  tree.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat["1", "1"] / sum(conf_mat[, "1"])
+  specificity <- conf_mat["0", "0"] / sum(conf_mat[, "0"])
+  
+  # Store sensitivity and specificity at optimal threshold
+  tree.sensitivity_vector[i] <- sensitivity
+  tree.specificity_vector[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  tree.misclassification_vector[i] <- mean(tree.pred.class != factor(test.Default, levels = c(0,1)))
+  
+  tree.auc_vector[i] <- auc(ROC)
+  tree.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  tree.optimal_thresholds[i] <- optimal_threshold
+}
+
+# Plot for ROC curves of Decision Tree models
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(tree.ROC_list[[1]])
+colors <- rainbow(k)
+for (i in 1:k) {
+  lines(tree.ROC_list[[i]], col = colors[i])
+}
+```
+Figure 10: ROC Curves for 5-Fold Cross-Validated Decision Tree with a Pruned Tree Size of 5.
+
+$\\ \\$
+
+Table 9: Average Confusion Matrix for Pruned Decision Tree Model of Tree Size 5 with 5-Fold Cross-Validation.
+```{r Decision Tree (Results), echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+tree.No_no <- numeric(k)
+tree.Yes_no <- numeric(k)
+tree.No_yes <- numeric(k)
+tree.Yes_yes <- numeric(k)
+
+for (i in 1:k){
+  tree.No_no[i] <- tree.confusion.tables[[i]][1]
+  tree.Yes_no[i] <- tree.confusion.tables[[i]][2]
+  tree.No_yes[i] <- tree.confusion.tables[[i]][3]
+  tree.Yes_yes[i] <- tree.confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+tree.avg.matrix <- matrix(c(mean(tree.No_no), mean(tree.No_yes),
+                             mean(tree.Yes_no), mean(tree.Yes_yes)),
+                           nrow = 2, byrow = TRUE,
+                           dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(tree.avg.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+tree.mean_auc <- mean(tree.auc_vector)
+tree.mean_sensitivity <- mean(tree.sensitivity_vector)
+tree.mean_specificity <- mean(tree.specificity_vector)
+tree.mean_misclassification <- mean(tree.misclassification_vector)
+
+cat("Average Results for Decision Tree Model with size of 5 and 5-Fold Cross-Validation\n",
+    "Average AUC: ", tree.mean_auc, ",  sd = ", sd(tree.auc_vector), "\n",
+    "Average Sensitivity: ", tree.mean_sensitivity, ",  sd = ", sd(tree.sensitivity_vector), "\n",
+    "Average Specificity: ", tree.mean_specificity, ",  sd = ", sd(tree.specificity_vector), "\n",
+    "Average Misclassification Rate: ", tree.mean_misclassification, ",  sd = ", sd(tree.misclassification_vector), "\n")
+
+```
+
+From the decision tree model a tree size of 5 was determined to be the tree size that minimizes the number of misclassifications for the German credit data set. Using a tree size of 5 for each fold in the 5-fold CV, the decision tree model produced an AUC of about 0.7158 with an average misclassification rate of 0.35. The decision tree model produced an average sensitivity of 0.81 and an average specificity of about 0.6914 using the optimal p-thresholds determined by the Youden Index. The performance of the model suggests that while it has a strong ability to correctly identify defaulters (as indicated by the high sensitivity), its overall discriminative power is somewhat limited compared to other models, as reflected in the relatively lower AUC and higher misclassification rate.
+
+## Random Forest
+For the Random Forest model, classification performance was evaluated using 5-fold cross-validation. Within each fold, a forest of 500 trees was trained on the corresponding training set. Class probability estimates were generated for the validation set using the trained forest, and the optimal classification threshold was determined by maximizing the Youden Index on the ROC curve. This threshold was then used to convert probabilities into binary class predictions for that fold. Performance metrics, including sensitivity, specificity, AUC, and misclassification rate, were computed at the optimal threshold. Average confusion matrices and summary statistics were aggregated across all folds to assess model stability and generalization. This approach ensures that threshold selection is tailored to the model's calibration in each fold, and that performance is fairly estimated using out-of-sample predictions.
+
+```{r Random Forest, echo=FALSE, warning=FALSE, message=FALSE}
+############### Random Forest
+set.seed(12)
+
+#Initialize storage
+rf.confusion.tables <- list()
+rf.ROC_list <- list()
+rf.AUC_vector <- numeric(k)
+rf.sensitivity_vector <- numeric(k)
+rf.specificity_vector <- numeric(k)
+rf.misclassification_vector <- numeric(k)
+rf.optimal_thresholds <- list()
+
+for (i in 1:k) {
+  val.set.name <- paste0("val.set.", i)
+  current.val.set <- get(val.set.name)
+  indices <- as.numeric(rownames(current.val.set))
+  
+  # Training set
+  train.set <- germancredit[-indices, ]
+  
+  # Fit Random Forest on training set
+  rf.model <- randomForest(Default ~ ., data = train.set, ntree = 500)
+  
+  # Predict probabilities on validation set
+  rf.probs <- predict(rf.model, current.val.set, type = "prob")[, 2]
+  
+  # Create ROC object
+  ROC <- roc(current.val.set$Default, rf.probs)
+  
+  # Find threshold maximizing Youden index
+  youden_index <- ROC$sensitivities + ROC$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- ROC$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  rf.pred.class <- factor(ifelse(rf.probs > optimal_threshold, "1", "0"), levels = c("0", "1"))
+  
+  conf_mat <- table(Predicted = rf.pred.class, Actual = factor(current.val.set$Default, levels = c(0,1)))
+  rf.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat["1", "1"] / sum(conf_mat[, "1"])
+  specificity <- conf_mat["0", "0"] / sum(conf_mat[, "0"])
+  
+  # Store sensitivity and specificity at optimal threshold
+  rf.sensitivity_vector[i] <- sensitivity
+  rf.specificity_vector[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  rf.misclassification_vector[i] <- mean(rf.pred.class != factor(current.val.set$Default, levels = c(0,1)))
+  
+  rf.AUC_vector[i] <- auc(ROC)
+  rf.ROC_list[[i]] <- ROC
+  
+  # Optionally print or store threshold if you want
+  rf.optimal_thresholds[i] <- optimal_threshold
+}
+
+#Plot for ROC curves of Random Forrest model for each k-fold
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(rf.ROC_list[[1]])
+for (i in 2:k) {
+  lines(rf.ROC_list[[i]], col = rainbow(k)[i])
+}
+```
+Figure 11: ROC Curves for 5-Fold Cross-Validated Random Forest Model.
+
+$\\ \\$
+
+Table 10: Average Confusion Matrix for Random Forest Model with 5-Fold Cross-Validation.
+```{r Random Forest (Results), echo=FALSE, warning=FALSE, message=FALSE}
+#Initialize list to store values of each fold
+rf.No_no <- numeric(k)
+rf.Yes_no <- numeric(k)
+rf.No_yes <- numeric(k)
+rf.Yes_yes <- numeric(k)
+
+#Loop to get each value of table
+for (i in 1:k){
+  rf.No_no[i] <- rf.confusion.tables[[i]][1]
+  rf.Yes_no[i] <- rf.confusion.tables[[i]][2]
+  rf.No_yes[i] <- rf.confusion.tables[[i]][3]
+  rf.Yes_yes[i] <- rf.confusion.tables[[i]][4]
+}
+
+#Makes the Confusion Matrix of Average Values
+rf.means.matrix <- matrix(c(mean(rf.No_no), mean(rf.No_yes),
+                            mean(rf.Yes_no), mean(rf.Yes_yes)),
+                          nrow = 2, byrow = TRUE,
+                          dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(rf.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+#Average performance metrics
+rf.mean.AUC <- mean(rf.AUC_vector)
+rf.mean.misclassification <- mean(rf.misclassification_vector)
+rf.mean.sensitivity <- mean(rf.sensitivity_vector)
+rf.mean.specificity <- mean(rf.specificity_vector)
+
+cat("Average Results for Random Forest Model with 5-Fold Cross-Validation\n",
+    "Average AUC: ", rf.mean.AUC, ",  sd = ", sd(rf.AUC_vector), "\n", 
+    "Average Sensitivity: ", rf.mean.sensitivity, ",  sd = ", sd(rf.sensitivity_vector), "\n",
+    "Average Specificity: ", rf.mean.specificity, ",  sd = ", sd(rf.specificity_vector), "\n",
+    "Average Misclassification Rate: ", rf.mean.misclassification, ",  sd = ", sd(rf.misclassification_vector), "\n",
+    sep = "")
+```
+
+The results of the Random Forest model showed an average AUC of approximately 0.7935 with an average misclassification rate of 0.277. Using the optimal p-thresholds determined by the Youden Index across the 5-fold cross-validation, the model achieved an average sensitivity of 0.79 and a specificity of about 0.6943. These results indicate that the model performs well in identifying defaulters, while maintaining a reasonable ability to correctly classify non-defaulters. With an AUC nearing 0.8 and balanced performance across classes, the Random Forest model demonstrates strong overall predictive power and robustness, outperforming several of the simpler models in terms of discrimination ability.
+
+## XGBoost
+For the XGBoost model, classification performance was assessed using 5-fold cross-validation. In each fold, the training set was used to fit a gradient-boosted tree model with 100 boosting rounds and a logistic objective. Factor variables were converted to numeric codes for compatibility with the XGBoost framework. After generating predicted probabilities on the validation set, the optimal classification threshold was determined by maximizing the Youden Index from the ROC curve. Binary class predictions were then made using this threshold, and evaluation metrics including AUC, sensitivity, specificity, and misclassification rate — were calculated for each fold. Averaging these results provided a stable estimate of model performance across all validation folds.
+
+
+```{r XGBoost, echo=FALSE, warning=FALSE, message=FALSE}
+############### XGBoost
+set.seed(12)
+
+#XGBoost with Optimal Threshold
+xgb.ROC_list <- list()
+xgb.auc_vector <- numeric(k)
+xgb.confusion.tables <- list()
+xgb.sensitivity_vector <- numeric(k)
+xgb.specificity_vector <- numeric(k)
+xgb.misclassification_vector <- numeric(k)
+optimal_thresholds <- numeric(k)
+
+for (i in 1:k) {
+  val.set <- get(paste0("val.set.", i))
+  val.indices <- as.numeric(rownames(val.set))
+  train.set <- germancredit[-val.indices, ]
+  
+  # Ensure Default is factor with levels "0", "1"
+  train.set$Default <- factor(train.set$Default, levels = c("0", "1"))
+  val.set$Default <- factor(val.set$Default, levels = c("0", "1"))
+  
+  # Convert factors (except Default) to integer codes in train and val
+  factor.cols <- sapply(train.set, is.factor)
+  factor.cols["Default"] <- FALSE  # exclude Default label
+  
+  train.set[factor.cols] <- lapply(train.set[factor.cols], function(x) as.integer(x))
+  val.set[factor.cols] <- lapply(val.set[factor.cols], function(x) as.integer(x))
+  
+  # Prepare matrices (exclude Default)
+  train_matrix <- as.matrix(train.set[, !(names(train.set) %in% "Default")])
+  val_matrix <- as.matrix(val.set[, !(names(val.set) %in% "Default")])
+  
+  # Prepare label as numeric 0/1
+  train_label <- as.numeric(as.character(train.set$Default))
+  val_label <- as.numeric(as.character(val.set$Default))
+  
+  dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+  dval <- xgb.DMatrix(data = val_matrix, label = val_label)
+  
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "auc"
+  )
+  
+  xgb_model <- xgb.train(params = params, data = dtrain, nrounds = 100, verbose = 0)
+  
+  val_pred_prob <- predict(xgb_model, dval)
+  
+  roc_obj <- roc(val_label, val_pred_prob)
+  
+  # Find threshold maximizing Youden index
+  youden_index <- roc_obj$sensitivities + roc_obj$specificities - 1
+  opt_idx <- which.max(youden_index)
+  optimal_threshold <- roc_obj$thresholds[opt_idx]
+  
+  # Predict classes with optimal threshold
+  val_pred_class <- factor(ifelse(val_pred_prob > optimal_threshold, "1", "0"), levels = c("0", "1"))
+  
+  conf_mat <- table(Predicted = val_pred_class, Actual = factor(val_label, levels = c(0,1)))
+  xgb.confusion.tables[[i]] <- conf_mat
+  
+  sensitivity <- conf_mat["1", "1"] / sum(conf_mat[, "1"])
+  specificity <- conf_mat["0", "0"] / sum(conf_mat[, "0"])
+  
+  # Store sensitivity and specificity at optimal threshold
+  xgb.sensitivity_vector[i] <- sensitivity
+  xgb.specificity_vector[i] <- specificity
+  
+  # Misclassification at optimal threshold
+  xgb.misclassification_vector[i] <- mean(val_pred_class != factor(val_label, levels = c(0,1)))
+  
+  xgb.auc_vector[i] <- auc(roc_obj)
+  xgb.ROC_list[[i]] <- roc_obj
+  
+  # Optionally print or store threshold if you want
+  optimal_thresholds[i] <- optimal_threshold
+}
+
+# Plot ROC curves
+par(mar = c(4.5, 4.1, 4.1, 2.1))
+plot(xgb.ROC_list[[1]], main = "ROC Curves for XGBoost with 5-Fold CV")
+for (i in 2:k) {
+  lines(xgb.ROC_list[[i]], col = rainbow(k)[i])
+}
+```
+Figure 12: ROC Curves for XGBoost Model using 5-Fold Cross-Validation.
+
+$\\ \\$
+
+Table 11: Average Confusion Matrix for XGBoost Model with 5-Fold Cross-Validation.
+```{r XGBoost (Results), echo=FALSE, warning=FALSE, message=FALSE}
+# Average confusion matrix entries
+xgb.No_no <- numeric(k)
+xgb.Yes_no <- numeric(k)
+xgb.No_yes <- numeric(k)
+xgb.Yes_yes <- numeric(k)
+
+for (i in 1:k) {
+  xgb.No_no[i] <- xgb.confusion.tables[[i]][1]
+  xgb.Yes_no[i] <- xgb.confusion.tables[[i]][2]
+  xgb.No_yes[i] <- xgb.confusion.tables[[i]][3]
+  xgb.Yes_yes[i] <- xgb.confusion.tables[[i]][4]
+}
+
+# Average confusion matrix
+xgb.means.matrix <- matrix(c(mean(xgb.No_no), mean(xgb.No_yes),
+                             mean(xgb.Yes_no), mean(xgb.Yes_yes)),
+                           nrow = 2, byrow = TRUE,
+                           dimnames = list(c("No", "Yes"), c("No", "Yes")))
+kable(xgb.means.matrix) |>
+  kable_styling(latex_options = "hold_position")
+
+# Average metrics
+xgb.mean.AUC <- mean(xgb.auc_vector)
+xgb.mean.misclassification <- mean(xgb.misclassification_vector)
+xgb.mean.sensitivity <- mean(xgb.sensitivity_vector)
+xgb.mean.specificity <- mean(xgb.specificity_vector)
+
+# Final summary print
+cat("Average Results for XGBoost Model with 5-Fold Cross-Validation\n",
+    "Average AUC: ", xgb.mean.AUC, ",  sd = ", sd(xgb.auc_vector), "\n", 
+    "Average Sensitivity: ", xgb.mean.sensitivity, ",  sd = ", sd(xgb.sensitivity_vector), "\n",
+    "Average Specificity: ", xgb.mean.specificity, ",  sd = ", sd(xgb.specificity_vector), "\n",
+    "Average Misclassification Rate: ", xgb.mean.misclassification, ",  sd = ", sd(xgb.misclassification_vector), "\n",
+    sep = "")
+```
+
+The results of the XGBoost model indicate strong predictive performance, with an average AUC of approximately 0.7953 and an average misclassification rate of 0.273. Across the 5-fold cross-validation, the model achieved an average sensitivity of 0.81 and an average specificity of about 0.6914, using the optimal p-thresholds determined by the Youden Index. These results suggest that the XGBoost model effectively distinguishes between classes, with a particularly strong ability to correctly identify positive cases. The combination of high sensitivity and competitive AUC highlights the model’s robustness, making it one of the best-performing models evaluated in this analysis.
+
+
+# Comparison of Models/Conclusion
+Among the models evaluated, the best-performing classifiers include logistic regression, LDA, QDA, Random Forest, and XGBoost. While each model demonstrated acceptable predictive ability for credit default classification—falling within the commonly accepted AUC range of 0.7–0.8—they differ in performance characteristics that make them more suitable for different business or banking contexts.
+
+XGBoost and Random Forest models offered the strongest overall predictive performance, with AUCs of approximately 0.7953 and 0.7935, respectively. XGBoost slightly outperformed other models in terms of both sensitivity (0.81) and test error rate (0.273), making it a particularly attractive option when the primary goal is to minimize missed defaults—a common priority in high-risk lending environments or when identifying potentially costly defaults is critical. Random Forest, with comparable metrics, provides a balance between model complexity and interpretability and may be preferred when slightly more transparency is needed in decision-making.
+
+Logistic Regression and LDA performed similarly, with AUCs of approximately 0.7885 and 0.7778, respectively. Both models achieved balanced sensitivity and specificity, making them suitable for low-to-moderate risk portfolios or contexts where model simplicity, interpretability, and regulatory transparency are important. These models are also easier to implement and explain to stakeholders, which may be necessary in consumer credit settings or smaller financial institutions with compliance constraints.
+QDA, while still within the acceptable performance range (AUC ≈ 0.7629), showed a higher test error rate (0.302) and imbalance between sensitivity and specificity, suggesting it leans more toward detecting defaulters at the cost of misclassifying non-defaulters. This behavior might be desirable in risk-averse contexts where catching as many defaulters as possible is prioritized, but it may also result in more false positives, which could unnecessarily restrict credit access for reliable customers.
+
+Ultimately, model selection should align with the operational/business priorities and risk tolerance of business/banks using these type of machine learning models on credit data.
